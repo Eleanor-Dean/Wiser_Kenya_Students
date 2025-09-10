@@ -38,6 +38,8 @@ data_kenya = [
     [3.82, 3.31, 4.43, 3.68, 4.33, 3.44, 3.11, 4.43, 4.12, 4.07, 5.64, 4.91, 3.84, 5.01, 3.47],
     [1.91, 2.18, 1.96, 1.72, 2.22, 2.07, 2.17, 1.53, 2.56, 2.78, 2.42, 2.74, 1.44, 2.59, 2.71]
 ]
+Chirps = [1.52, 2.93, 1.95, 1.51, 5.56, 1.33, 2.04, 2.34, 1.99, 2.95, 1.90, 2.40, 1.15, 4.31, 1.83, 1.98, 2.65, 1.55, 3.86, 2.72, 2.25, 2.31, 3.13, 1.70]
+
 
 data_kenya_new = [
     [2.08, 2.44, 1.68, 3.23, 2.36, 2.10, 3.17, 3.24, 3.28, 2.30, 1.64, 2.25, 2.59, 1.89, 2.02],
@@ -319,6 +321,8 @@ BORDER_OPT = {
     "Djibouti_Obs_Chirps": Chirps_Djibouti,
     "Eritrea_Hindcast": da_Eritrea,
     "Eritrea_Obs_Chirps": Chirps_Eritrea,
+    "Kenya_old": da,
+    "Kenya_chirps_old": Chirps,
 }
 
 # Define the location function
@@ -329,6 +333,393 @@ def location(local):
         raise ValueError(f"Location '{local}' not found.")
 
     
+def terciles(da,obs,state): 
+    RFA_upper = np.percentile(da, 66.66666)
+    RFA_lower = np.percentile(da, 33.33333)
+    
+    Yearly_Forecast_member_below = []
+    Yearly_Forecast_member_above= []
+    Yearly_Forecast_member_between = []
+    
+    for i in range(da.sizes['year']):
+             data = da.isel(year=i)
+             cat_0_mask = data < RFA_lower
+             Yearly_Forecast_member_below.append(cat_0_mask)
+             cat_1_mask = data > RFA_upper
+             Yearly_Forecast_member_above.append(cat_1_mask)
+             cat_2_mask = (data >= RFA_lower) & (data <= RFA_upper)
+             Yearly_Forecast_member_between.append(cat_2_mask)
+      
+    Yearly_Forecast_below= xr.concat(Yearly_Forecast_member_below, dim='year')
+    Yearly_Forecast_above= xr.concat(Yearly_Forecast_member_above, dim='year')
+    Yearly_Forecast_between= xr.concat(Yearly_Forecast_member_between, dim='year')
+    
+    Yearly_Counts_Below = Yearly_Forecast_below.sum(dim="member")
+    Yearly_Counts_Above = Yearly_Forecast_above.sum(dim="member")
+    Yearly_Counts_Between = Yearly_Forecast_between.sum(dim="member")
+    
+     
+    Yearly_percentage_Below = []
+    
+    
+    for i in range(Yearly_Counts_Below.sizes['year']):
+        percentage = (Yearly_Counts_Below.isel(year=i).item() / da.member.size) *100
+        Yearly_percentage_Below.append(percentage)
+    
+    
+    Yearly_percentage_Above = []
+    
+    
+    for i in range(Yearly_Counts_Above.sizes['year']):
+        percentage = (Yearly_Counts_Above.isel(year=i).item() / da.member.size) *100
+        Yearly_percentage_Above.append(percentage)
+        
+    Yearly_percentage_Between = []
+    
+    
+    for i in range(Yearly_Counts_Between.sizes['year']):
+        percentage = (Yearly_Counts_Between.isel(year=i).item() / da.member.size) *100
+        Yearly_percentage_Between.append(percentage)
+        
+    RFA_obs = obs
+    
+    RFA_upper_obs = np.percentile(RFA_obs, 66.66666)
+    RFA_lower_obs = np.percentile(RFA_obs, 33.33333)
+    
+    RFANP = np.array(RFA_obs)
+    RFANP[RFANP>RFA_upper_obs]= 3
+    RFANP[RFANP<RFA_lower_obs]= 1
+    RFANP[(RFANP<RFA_upper_obs)&(RFANP>RFA_lower_obs)]= 2
+    
+    RFA_Catagories = RFANP 
+
+    ##FOR ABOVE 
+
+    if state == "above":
+        thresholds = np.arange(0, 110, 20)
+        observed = RFA_Catagories
+        forecast = Yearly_percentage_Above
+        years = np.arange(1993, 2017)
+        
+        # Create a result matrix: rows = years, columns = thresholds
+        result_matrix_hits = np.zeros((len(observed), len(thresholds)), dtype=int)
+        result_matrix_false = np.zeros((len(observed), len(thresholds)), dtype=int)
+        
+        # Fill the matrix
+        for i, threshold in enumerate(thresholds):
+            result_matrix_hits[:, i] = ((forecast >= threshold) & (observed == 3)).astype(int)
+            result_matrix_false[:, i] = ((forecast >= threshold) & (observed != 3)).astype(int)
+        
+        # Count 1s in each column
+        column_counts_hits = np.sum(result_matrix_hits, axis=0)
+        column_counts_false = np.sum(result_matrix_false, axis=0)
+
+        Occurances = (np.count_nonzero(observed == 3))
+        Non_Occurances = (np.count_nonzero(observed != 3))
+
+        Hitrates = column_counts_hits/Occurances
+        FAR = column_counts_false/Non_Occurances
+
+        return Hitrates, FAR
+        
+    if state == "below":
+        thresholds = np.arange(0, 110, 20)
+        observed = RFA_Catagories
+        forecast = Yearly_percentage_Below
+        years = np.arange(1993, 2017)
+        
+        # Create a result matrix: rows = years, columns = thresholds
+        result_matrix_hits = np.zeros((len(observed), len(thresholds)), dtype=int)
+        result_matrix_false = np.zeros((len(observed), len(thresholds)), dtype=int)
+        
+        # Fill the matrix
+        for i, threshold in enumerate(thresholds):
+            result_matrix_hits[:, i] = ((forecast >= threshold) & (observed == 1)).astype(int)
+            result_matrix_false[:, i] = ((forecast >= threshold) & (observed != 1)).astype(int)
+        
+        # Count 1s in each column
+        column_counts_hits = np.sum(result_matrix_hits, axis=0)
+        column_counts_false = np.sum(result_matrix_false, axis=0)
+
+        Occurances = (np.count_nonzero(observed == 1))
+        Non_Occurances = (np.count_nonzero(observed != 1))
+
+        Hitrates = column_counts_hits/Occurances
+        FAR = column_counts_false/Non_Occurances
+
+        return Hitrates, FAR
+    if state == "average":
+        thresholds = np.arange(0, 110, 20)
+        observed = RFA_Catagories
+        forecast = Yearly_percentage_Between
+        years = np.arange(1993, 2017)
+        
+        # Create a result matrix: rows = years, columns = thresholds
+        result_matrix_hits = np.zeros((len(observed), len(thresholds)), dtype=int)
+        result_matrix_false = np.zeros((len(observed), len(thresholds)), dtype=int)
+        
+        # Fill the matrix
+        for i, threshold in enumerate(thresholds):
+            result_matrix_hits[:, i] = ((forecast >= threshold) & (observed == 2)).astype(int)
+            result_matrix_false[:, i] = ((forecast >= threshold) & (observed != 2)).astype(int)
+        
+        # Count 1s in each column
+        column_counts_hits = np.sum(result_matrix_hits, axis=0)
+        column_counts_false = np.sum(result_matrix_false, axis=0)
+
+        Occurances = (np.count_nonzero(observed == 2))
+        Non_Occurances = (np.count_nonzero(observed != 2))
+
+        Hitrates = column_counts_hits/Occurances
+        FAR = column_counts_false/Non_Occurances
+
+        return Hitrates, FAR
+
+
+def probs(da, obs, state):
+    RFA_upper = np.percentile(da, 66.66666)
+    RFA_lower = np.percentile(da, 33.33333)
+
+    Yearly_Forecast_member_below = []
+    Yearly_Forecast_member_above = []
+    Yearly_Forecast_member_between = []
+
+    for i in range(da.sizes['year']):
+        data = da.isel(year=i)
+        cat_0_mask = data < RFA_lower
+        Yearly_Forecast_member_below.append(cat_0_mask)
+        cat_1_mask = data > RFA_upper
+        Yearly_Forecast_member_above.append(cat_1_mask)
+        cat_2_mask = (data >= RFA_lower) & (data <= RFA_upper)
+        Yearly_Forecast_member_between.append(cat_2_mask)
+
+    Yearly_Forecast_below = xr.concat(Yearly_Forecast_member_below, dim='year')
+    Yearly_Forecast_above = xr.concat(Yearly_Forecast_member_above, dim='year')
+    Yearly_Forecast_between = xr.concat(Yearly_Forecast_member_between, dim='year')
+
+    Yearly_Counts_Below = Yearly_Forecast_below.sum(dim="member")
+    Yearly_Counts_Above = Yearly_Forecast_above.sum(dim="member")
+    Yearly_Counts_Between = Yearly_Forecast_between.sum(dim="member")
+
+    Yearly_percentage_Below = [
+        (Yearly_Counts_Below.isel(year=i).item() / da.sizes['member']) * 100
+        for i in range(Yearly_Counts_Below.sizes['year'])
+    ]
+
+    Yearly_percentage_Above = [
+        (Yearly_Counts_Above.isel(year=i).item() / da.sizes['member']) * 100
+        for i in range(Yearly_Counts_Above.sizes['year'])
+    ]
+
+    Yearly_percentage_Between = [
+        (Yearly_Counts_Between.isel(year=i).item() / da.sizes['member']) * 100
+        for i in range(Yearly_Counts_Between.sizes['year'])
+    ]
+
+    RFA_obs = obs
+    RFA_upper_obs = np.percentile(RFA_obs, 66.66666)
+    RFA_lower_obs = np.percentile(RFA_obs, 33.33333)
+
+    RFANP = np.array(RFA_obs)
+    RFANP[RFANP > RFA_upper_obs] = 3
+    RFANP[RFANP < RFA_lower_obs] = 1
+    RFANP[(RFANP <= RFA_upper_obs) & (RFANP >= RFA_lower_obs)] = 2
+
+    RFA_Catagories = RFANP
+
+    thresholds_l = 30
+    thresholds_h = 40
+
+    if state == "above":
+        forecast = np.array(Yearly_percentage_Above)
+        observed = RFA_Catagories
+    elif state == "below":
+        forecast = np.array(Yearly_percentage_Below)
+        observed = RFA_Catagories
+    elif state == "average":
+        forecast = np.array(Yearly_percentage_Between)
+        observed = RFA_Catagories
+    else:
+        raise ValueError("Invalid state. Choose from 'above', 'below', or 'average'.")
+
+    category_map = {'above': 3, 'below': 1, 'average': 2}
+    result_matrix_lower_true = ((forecast <= thresholds_l) & (observed == category_map[state])).astype(int)
+    result_matrix_higher_true = ((forecast >= thresholds_h) & (observed == category_map[state])).astype(int)
+    result_matrix_lower_false = (forecast <= thresholds_l).astype(int)
+    result_matrix_higher_false = (forecast >= thresholds_h).astype(int)
+
+    column_counts_lower_true = np.sum(result_matrix_lower_true)
+    column_counts_higher_true = np.sum(result_matrix_higher_true)
+    column_counts_lower_false = np.sum(result_matrix_lower_false)
+    column_counts_higher_false = np.sum(result_matrix_higher_false)
+
+    Hitrates = column_counts_lower_true / column_counts_lower_false if column_counts_lower_false != 0 else np.nan
+    FAR = column_counts_higher_true / column_counts_higher_false if column_counts_higher_false != 0 else np.nan
+
+    return Hitrates, FAR, column_counts_higher_false, column_counts_lower_false
+
+
+
+
+# def probs(da,obs,state): 
+#     RFA_upper = np.percentile(da, 66.66666)
+#     RFA_lower = np.percentile(da, 33.33333)
+    
+#     Yearly_Forecast_member_below = []
+#     Yearly_Forecast_member_above= []
+#     Yearly_Forecast_member_between = []
+    
+#     for i in range(da.sizes['year']):
+#              data = da.isel(year=i)
+#              cat_0_mask = data < RFA_lower
+#              Yearly_Forecast_member_below.append(cat_0_mask)
+#              cat_1_mask = data > RFA_upper
+#              Yearly_Forecast_member_above.append(cat_1_mask)
+#              cat_2_mask = (data >= RFA_lower) & (data <= RFA_upper)
+#              Yearly_Forecast_member_between.append(cat_2_mask)
+      
+#     Yearly_Forecast_below= xr.concat(Yearly_Forecast_member_below, dim='year')
+#     Yearly_Forecast_above= xr.concat(Yearly_Forecast_member_above, dim='year')
+#     Yearly_Forecast_between= xr.concat(Yearly_Forecast_member_between, dim='year')
+    
+#     Yearly_Counts_Below = Yearly_Forecast_below.sum(dim="member")
+#     Yearly_Counts_Above = Yearly_Forecast_above.sum(dim="member")
+#     Yearly_Counts_Between = Yearly_Forecast_between.sum(dim="member")
+    
+     
+#     Yearly_percentage_Below = []
+    
+    
+#     for i in range(Yearly_Counts_Below.sizes['year']):
+#         percentage = (Yearly_Counts_Below.isel(year=i).item() / da.member.size) *100
+#         Yearly_percentage_Below.append(percentage)
+    
+    
+#     Yearly_percentage_Above = []
+    
+    
+#     for i in range(Yearly_Counts_Above.sizes['year']):
+#         percentage = (Yearly_Counts_Above.isel(year=i).item() / da.member.size) *100
+#         Yearly_percentage_Above.append(percentage)
+        
+#     Yearly_percentage_Between = []
+    
+    
+#     for i in range(Yearly_Counts_Between.sizes['year']):
+#         percentage = (Yearly_Counts_Between.isel(year=i).item() / da.member.size) *100
+#         Yearly_percentage_Between.append(percentage)
+        
+#     RFA_obs = obs
+    
+#     RFA_upper_obs = np.percentile(RFA_obs, 66.66666)
+#     RFA_lower_obs = np.percentile(RFA_obs, 33.33333)
+    
+#     RFANP = np.array(RFA_obs)
+#     RFANP[RFANP>RFA_upper_obs]= 3
+#     RFANP[RFANP<RFA_lower_obs]= 1
+#     RFANP[(RFANP<RFA_upper_obs)&(RFANP>RFA_lower_obs)]= 2
+    
+#     RFA_Catagories = RFANP 
+
+#     ##FOR ABOVE 
+
+#     if state == "above":
+#         thresholds_l = 30
+#         thresholds_h = 40
+        
+#         observed = RFA_Catagories
+#         forecast = Yearly_percentage_Above
+#         years = np.arange(1993, 2017)
+        
+#         # Create a result matrix: rows = years, columns = thresholds
+#         result_matrix_higher_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_higher_false = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_false = np.zeros((len(observed),), dtype=int)
+        
+        
+#         # Fill the matrix
+#         result_matrix_lower_true = ((forecast <= thresholds_l) & (observed == 3)).astype(int)
+#         result_matrix_higher_true = ((forecast >= thresholds_h) & (observed == 3)).astype(int)
+#         result_matrix_lower_false= ((forecast <= thresholds_l)).astype(int)
+#         result_matrix_higher_false = ((forecast >= thresholds_h)).astype(int)
+        
+#         # Count 1s in each column
+#         column_counts_lower_true = np.sum(result_matrix_lower_true, axis=0)
+#         column_counts_higher_true = np.sum(result_matrix_higher_true, axis=0)
+#         column_counts_lower_false = np.sum(result_matrix_lower_false, axis=0)
+#         column_counts_higher_false = np.sum(result_matrix_higher_false, axis=0)
+
+#         Hitrates = column_counts_lower_true/column_counts_lower_false
+#         FAR = column_counts_higher_true/column_counts_higher_false
+
+#         return Hitrates, FAR, column_counts_higher_false, column_counts_lower_false
+        
+#     if state == "below":
+#         thresholds_l = 30
+#         thresholds_h = 40
+        
+#         observed = RFA_Catagories
+#         forecast = Yearly_percentage_Below
+#         years = np.arange(1993, 2017)
+        
+#         # Create a result matrix: rows = years, columns = thresholds
+#         result_matrix_higher_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_higher_false = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_false = np.zeros((len(observed),), dtype=int)
+        
+        
+#         # Fill the matrix
+#         result_matrix_lower_true= ((forecast <= thresholds_l) & (observed == 1)).astype(int)
+#         result_matrix_higher_true= ((forecast >= thresholds_h) & (observed == 1)).astype(int)
+#         result_matrix_lower_false= ((forecast <= thresholds_l)).astype(int)
+#         result_matrix_higher_false= ((forecast >= thresholds_h)).astype(int)
+        
+#         # Count 1s in each column
+#         column_counts_lower_true = np.sum(result_matrix_lower_true, axis=0)
+#         column_counts_higher_true = np.sum(result_matrix_higher_true, axis=0)
+#         column_counts_lower_false = np.sum(result_matrix_lower_false, axis=0)
+#         column_counts_higher_false = np.sum(result_matrix_higher_false, axis=0)
+
+#         Hitrates = column_counts_lower_true/column_counts_lower_false
+#         FAR = column_counts_higher_true/column_counts_higher_false
+
+#         return Hitrates, FAR, column_counts_higher_false, column_counts_lower_false
+
+#         return Hitrates, FAR
+#     if state == "average":
+#         thresholds_l = 30
+#         thresholds_h = 40
+        
+#         observed = RFA_Catagories
+#         forecast = Yearly_percentage_Between
+#         years = np.arange(1993, 2017)
+        
+#         # Create a result matrix: rows = years, columns = thresholds
+#         result_matrix_higher_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_true = np.zeros((len(observed),), dtype=int)
+#         result_matrix_higher_false = np.zeros((len(observed),), dtype=int)
+#         result_matrix_lower_false = np.zeros((len(observed),), dtype=int)
+        
+        
+#         # Fill the matrix
+        
+#         result_matrix_lower_true = ((forecast <= thresholds_l) & (observed == 2)).astype(int)
+#         result_matrix_higher_true = ((forecast >= thresholds_h) & (observed == 2)).astype(int)
+#         result_matrix_lower_false= ((forecast <= thresholds_l)).astype(int)
+#         result_matrix_higher_false = ((forecast >= thresholds_h)).astype(int)
+        
+#         # Count 1s in each column
+#         column_counts_lower_true = np.sum(result_matrix_lower_true, axis=0)
+#         column_counts_higher_true = np.sum(result_matrix_higher_true, axis=0)
+#         column_counts_lower_false = np.sum(result_matrix_lower_false, axis=0)
+#         column_counts_higher_false = np.sum(result_matrix_higher_false, axis=0)
+
+#         Hitrates = column_counts_lower_true/column_counts_lower_false
+#         FAR = column_counts_higher_true/column_counts_higher_false
+
+#         return Hitrates, FAR, column_counts_higher_false, column_counts_lower_false
 
 
 # In[12]:
